@@ -1,32 +1,3 @@
-/*
-   This is a simple example file to show how to use the WiMOD Arduino
-   library to communicate with a WiMOD Module by IMST GmbH
-
-   http://www.wireless-solutions.de
-
-*/
-
-
-/*
-   Example:
-
-   This example demonstrates how to start a LoRaWAN ABP procedure to "register"
-   the WiMOD to a LoRaWAN server
-
-   Setup requirements:
-   -------------------
-   - 1 WiMOD module running wiMOD_LoRaWAN_EndNode_Modemfirmware
-
-   Usage:
-   -------
-   - Change the keys according to your LoRaWAN server before starting
-   - Start the program and watch the serial monitor @ 115200 baud
-*/
-
-
-// make sure to use only the WiMODLoRaWAN.h
-// the WiMODLR_BASE.h must not be used for LoRaWAN firmware.
-
 
 #include "SHT20.h"
 #include <ModbusMaster.h>
@@ -36,9 +7,18 @@
 #include <HardwareSerial.h>
 
 HardwareSerial mySerial(1); //
+HardwareSerial modbus(2);
 ModbusMaster node;
 #endif
 
+struct Meter
+{
+  uint16_t temp;
+  uint16_t hum;
+
+};
+
+Meter meter ;
 
 #if defined(ARDUINO_ARCH_AVR)
 #include <avr/pgmspace.h>
@@ -98,44 +78,8 @@ TRuntimeInfo RIB = {  };
 static uint32_t loopCnt = 0;
 static TWiMODLORAWAN_TX_Data txData;
 
-
-float Read_Meter_float(char addr , uint16_t  REG) {
-  unsigned int i = 0;
-  uint32_t j, result;
-  uint16_t data[2];
-  uint32_t value = 0;
-//  node.begin(addr, modbus);
-  result = node.readInputRegisters (REG, 2); ///< Modbus function 0x04 Read Input Registers
-  delay(1000);
-  if (result == node.ku8MBSuccess) {
-    for (j = 0; j < 2; j++)
-    {
-      data[j] = node.getResponseBuffer(j);
-      //      Serial.println(data[j]);
-    }
-
-
-    for (int a = 0; a < 2; a++)
-    {
-      Serial.print(data[a]);
-      Serial.print("\t");
-    }
-    Serial.println("");
-
-    Serial.println("Connec modbus Ok.");
-    return i;
-  } else {
-    Serial.print("Connec modbus fail. REG >>> "); Serial.println(REG, HEX); // Debug
-    delay(1000);
-    return 0;
-  }
-}
-void getProbe() {     // Update read all data
-  //  delay(1000);                              // เคลียบัสว่าง
-  for (char i = 0; i < Total_of_Reg ; i++) {
-    DATA_METER [i] = Read_Meter_float(ID_meter, Reg_addr[i]);//แสกนหลายตัวตามค่า ID_METER_ALL=X
-  }
-}
+ 
+ 
 //-----------------------------------------------------------------------------
 // section code
 //-----------------------------------------------------------------------------
@@ -185,11 +129,10 @@ void printStartMsg()
 void setup()
 {
 
-  mySerial.begin(9600, SERIAL_8N1, SERIAL1_RXPIN, SERIAL1_TXPIN);
-
-  // Address Slave = 1
-   node.begin(1, mySerial);
-  // init the communication stack
+  mySerial.begin(115200, SERIAL_8N1, SERIAL1_RXPIN, SERIAL1_TXPIN);
+  modbus.begin(9600, SERIAL_8N1, 16, 17);
+  // communicate with Modbus slave ID 1 over Serial (port 2)
+  node.begin(ID_Meter, modbus);
   wimod.begin();
 
   // debug interface
@@ -258,23 +201,69 @@ void setup()
 
 
 
+void readMeter() {
+
+
+  read_Modbus(data_) ;
+
+  delay(2000);
+}
+void read_Modbus(uint16_t  REG)
+{
+
+  static uint32_t i;
+  uint8_t j, result;
+  uint16_t data[2];
+  uint16_t dat[2];
+  uint32_t value = 0;
+
+
+  // slave: read (6) 16-bit registers starting at register 2 to RX buffer
+  result = node.readInputRegisters(REG, 2);
+
+  // do something with data if read is successful
+  if (result == node.ku8MBSuccess)
+  {
+    for (j = 0; j < 2; j++)
+    {
+      data[j] = node.getResponseBuffer(j);
+    }
+  }
+  for (int a = 0; a < 2; a++)
+  {
+    Serial.print(data[a]);
+    Serial.println("\t");
+  }
+  Serial.println("Modbus DATA");
+  meter.temp = data[0];
+  meter.hum = data[1];
+  Serial.println(meter.temp);
+  Serial.println(meter.hum);
+  Serial.println("----------------------");
+
+
+}
 void loop()
 {
   // check of ABP procedure has finished
   if (RIB.ModemState == ModemState_Connected) {
 
-
+//    Serial.println(loopCnt);
+    
     if ((loopCnt > 0) && (loopCnt % (6 * 50)) == 0) {
       // send out a simple HelloWorld messsage
-
-      debugMsg(F("{\"tem\":33.33,\"hum\":98.33}!' message...\n"));
+      readMeter();
 
       // prepare TX data structure
       txData.Port = 0x22;
-      char payload[] = "{\"tem\":33.33,\"hum\":98.33}";
-      debugMsg(payload);
-      txData.Length = strlen_P(PSTR(payload));
-      strcpy_P((char*) txData.Payload, PSTR(payload));
+      txData.Payload[0] = meter.temp>>8;
+      txData.Payload[1] = meter.temp;
+      txData.Payload[2] = meter.hum>>8;
+      txData.Payload[3] = meter.hum;
+      
+//      debugMsg(txData.Payload);
+      txData.Length = 4;
+      
       // try to send a message
       if (false == wimod.SendUData(&txData)) {
         // an error occurred
